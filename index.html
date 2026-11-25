@@ -1817,7 +1817,7 @@
     <section id="tabBackup" class="hidden">
       <div class="section-card">
         <h2 class="section-title" style="margin-bottom: 10px;">Aktualizace a zálohování</h2>
-        <p>Verze 2.2.2 · Datové schéma 3. Před aktualizací vždy stáhněte zálohu. Novou verzi lze načíst tlačítkem níže.</p>
+        <p>Verze 2.2.3 · Datové schéma 3. Před aktualizací vždy stáhněte zálohu. Novou verzi lze načíst tlačítkem níže.</p>
         <div class="info-box" style="margin-bottom: 14px;">
           <strong>Důležité upozornění:</strong> Vaše data jsou uložena lokálně přímo v tomto zařízení. Při vymazání dat prohlížeče nebo odinstalaci aplikace může dojít ke ztrátě dat. Pravidelně si stahujte záložní soubor.
         </div>
@@ -1866,7 +1866,7 @@
       <div class="section-card">
         <h2 class="section-title" style="margin-bottom: 6px;">Modul MŮJ ŽIVOT</h2>
         <p style="font-size: 13.5px; color: var(--text-muted); margin: 0;">
-          Verze celku: <strong>2.2.2 (Přehled, Kalendář, Úkoly, Režim dne a Směny, Kategorie, Záloha)</strong><br />
+          Verze celku: <strong>2.2.3 (Přehled, Kalendář, Úkoly, Režim dne a Směny, Kategorie, Záloha)</strong><br />
           Společný datový formát s lokální zálohou v JSON.
         </p>
       </div>
@@ -2229,7 +2229,7 @@
     const LEGACY_CAL_KEY = 'muj_zivot_kalendar_v1';
     const LEGACY_SHIFT_KEY = 'muj_zivot_integrated_v5';
     const APP_SCHEMA_VERSION = 3;
-    const APP_VERSION = '2.2.2';
+    const APP_VERSION = '2.2.3';
     const RECOVERY_KEY = STORAGE_KEY + '_recovery';
     let storageLocked = false;
 
@@ -2942,6 +2942,7 @@
       return appState.activities.filter(act => {
         if (activityDoneOn(act, iso)) return true;
         if (act.postponedUntilIso && iso < act.postponedUntilIso) return false;
+        if (act.forcePlanIso === iso || act.plannedTimes?.[iso] && iso <= today) return true;
         if (iso < today) return !!act.plannedTimes?.[iso];
         if (act.kind === 'daily') return true;
         const days = act.lastDoneIso ? diffDaysISO(act.lastDoneIso, iso) : (act.maxDays || 3)+1;
@@ -2967,6 +2968,8 @@
       const todayStr = toISODate(new Date());
       const act = appState.activities.find(a => a.id === id);
       if (!act) return;
+      if (activityDoneOn(act, todayStr)) return;
+      getFixedAndFlexibleItemsForDay(activityCandidates(todayStr), todayStr);
       act.prevDoneIso = act.lastDoneIso;
       act.lastDoneIso = todayStr;
       act.postponedUntilIso = null;
@@ -2993,12 +2996,21 @@
       refreshAllViews();
     }
 
+    function resumeActivity(id) {
+      const act = appState.activities.find(a => a.id === id);
+      if (!act) return;
+      act.postponedUntilIso = null;
+      act.forcePlanIso = toISODate(new Date());
+      saveState(); refreshAllViews();
+    }
+
     function postponeActivity(id) {
       const todayStr = toISODate(new Date());
       const act = appState.activities.find(a => a.id === id);
       if (!act) return;
       const nextDay = findNextCalmerDay(todayStr);
       act.postponedUntilIso = nextDay;
+      delete act.forcePlanIso;
       if (act.plannedTimes) delete act.plannedTimes[todayStr];
       saveState();
       showToast(`Odloženo na ${formatDayShortWithName(nextDay)}`);
@@ -3103,28 +3115,36 @@
         if (sMin !== null) eventAndTaskBlocks.push({ startMin: sMin, endMin: sMin + 15, source: 'task' });
       }
 
-      const fixedItems = [], flexibleItems = [];
+      const fixedItems = [], flexibleItems = [], unknownItems = [];
       for (const act of activitiesList) {
         const ov = getActivityDayOverride(act, iso);
         const dur = Math.max(5, Number(act.minutes) || 15);
         const saved = act.plannedTimes?.[iso];
-        const locked = saved && (activityDoneOn(act,iso) || iso < today || (iso === today && saved.startMin < floor));
+        const done = activityDoneOn(act, iso);
+        const locked = saved && Number.isFinite(saved.startMin) && (done || iso < today || (iso === today && saved.startMin < floor));
+        if (!locked && (done || iso < today) && !ov?.time) { unknownItems.push(act); continue; }
+        if (!locked && (done || iso < today) && ov?.time) {
+          const start = toMinutes(ov.time);
+          if (start !== null) { fixedItems.push({act,startMin:start,endMin:start+dur,isFixed:!!ov.fixedTime,isCustomTime:true}); continue; }
+          unknownItems.push(act); continue;
+        }
         const isFixed = !!(ov && ov.fixedTime) || !!locked;
         const explicitStart = locked ? saved.startMin : (ov && ov.time) ? toMinutes(ov.time) : toMinutes(act.recommendedTime);
         if (isFixed && explicitStart !== null) {
-          fixedItems.push({ act, startMin: explicitStart, endMin: explicitStart + dur, isFixed: true, isCustomTime: !!(ov && ov.time) });
+          fixedItems.push({ act, startMin: explicitStart, endMin: locked ? saved.endMin : explicitStart + dur, isFixed: !!ov?.fixedTime, isCustomTime: !!(ov && ov.time) });
         } else flexibleItems.push({ act, dur, explicitStart, isCustomTime: !!(ov && ov.time) });
       }
 
       const occupied = [...shiftBlocks, ...eventAndTaskBlocks, ...fixedItems.map(f => ({ startMin: f.startMin, endMin: f.endMin }))];
       const scheduledMap = new Map();
+      for (const act of unknownItems) scheduledMap.set(act.id, {startMin:null,endMin:null,suggestedTime:activityDoneOn(act,iso)?'Čas nezaznamenán':'Nenaplánováno',suggestedEndTime:'',windowText:`${act.windowStart || '08:00'}–${act.windowEnd || '20:00'}`,isFixed:false,conflict:false});
       for (const f of fixedItems) {
         const conflict = shiftBlocks.concat(eventAndTaskBlocks).some(occ => intervalsOverlap(f.startMin, f.endMin, occ.startMin, occ.endMin));
         scheduledMap.set(f.act.id, {
           startMin: f.startMin, endMin: f.endMin,
           suggestedTime: fromMinutes(f.startMin), suggestedEndTime: fromMinutes(f.endMin),
           windowText: `${f.act.windowStart || '08:00'}–${f.act.windowEnd || '20:00'}`,
-          isFixed: true, isCustomTime: f.isCustomTime, conflict
+          isFixed: f.isFixed, isCustomTime: f.isCustomTime, conflict
         });
       }
 
@@ -3160,14 +3180,18 @@
           scheduledMap.set(act.id, { startMin: null, endMin: null, suggestedTime: "Nenaplánováno", suggestedEndTime: "", windowText: `${act.windowStart || '08:00'}–${act.windowEnd || '20:00'}`, isFixed: false, isCustomTime, shiftedFromPreferred: true, conflict: true });
         }
       }
-      if (iso === today) {
+      if (iso >= today) {
         let changed = false;
         for (const act of activitiesList) {
           const t = scheduledMap.get(act.id);
-          if (!t || t.startMin === null) continue;
+          if (!t) continue;
           const original = appState.activities.find(a => a.id === act.id);
           if (!original) continue;
           const old = original.plannedTimes?.[iso];
+          if (t.startMin === null) {
+            if (old && !activityDoneOn(act,iso)) { delete original.plannedTimes[iso]; changed = true; }
+            continue;
+          }
           if (!old || old.startMin !== t.startMin || old.endMin !== t.endMin) {
             (original.plannedTimes ||= {})[iso] = {startMin:t.startMin,endMin:t.endMin}; changed = true;
           }
@@ -3223,7 +3247,7 @@
         const t = scheduleMap.get(act.id); if (!t) continue;
         const isDone = act.lastDoneIso === dateStr || (Array.isArray(appState.completedLog[dateStr]) && appState.completedLog[dateStr].includes(act.title));
         if (t.startMin === null) {
-          allDayItems.push({kind:'routineActivity',activity:act,dateStr,timing:t,isDoneOnDay:isDone,category:{id:'routine',color:'#b45309'},displayTitle:act.title,spanLabel:'Nenaplánováno',isAllDay:true});
+          allDayItems.push({kind:'routineActivity',activity:act,dateStr,timing:t,isDoneOnDay:isDone,category:{id:'routine',color:isDone?'#15803d':'#b45309'},displayTitle:(isDone?'✓ ':'')+act.title,spanLabel:isDone?'Splněno · čas nezaznamenán':'Nenaplánováno',isAllDay:true});
           continue;
         }
         const modeLabel = isDone ? 'splněno' : (t.isFixed ? 'pevný čas' : (t.shiftedFromPreferred ? 'přesunuto kvůli překryvu' : 'doporučeno'));
@@ -3251,6 +3275,7 @@
     }
 
     function bindRoutineActionButtons(container) {
+      container.querySelectorAll('[data-routine-resume]').forEach(btn => btn.addEventListener('click', e => { e.stopPropagation(); resumeActivity(btn.dataset.routineResume); }));
       container.querySelectorAll('[data-routine-done]').forEach(btn => {
         btn.addEventListener('click', (e) => {
           e.stopPropagation();
@@ -3513,6 +3538,7 @@
         appState.completedLog[dateStr] = log.filter(title => title !== act.title);
         if (act.lastDoneIso === dateStr) act.lastDoneIso = act.prevDoneIso || null;
       } else {
+        getFixedAndFlexibleItemsForDay(activityCandidates(dateStr), dateStr);
         log.push(act.title); if (!act.lastDoneIso || dateStr >= act.lastDoneIso) { act.prevDoneIso = act.lastDoneIso || null; act.lastDoneIso = dateStr; } act.postponedUntilIso = null;
       }
       saveState(); refreshAllViews();
@@ -3525,14 +3551,20 @@
       const time = document.getElementById('diaryActTimeInput').value;
       const fixedTime = document.getElementById('diaryActFixedTime').checked;
       act.dayScheduleOverrides[dateStr] = { time: time || null, fixedTime };
-      if (act.plannedTimes) delete act.plannedTimes[dateStr];
+      const old = act.plannedTimes?.[dateStr];
+      const start = toMinutes(time);
+      const now = new Date(), today = toISODate(now);
+      const protectedTime = activityDoneOn(act,dateStr) || dateStr < today || (dateStr === today && old && old.startMin <= now.getHours()*60+now.getMinutes());
+      if (protectedTime && start !== null) (act.plannedTimes ||= {})[dateStr] = {startMin:start,endMin:start+(old ? old.endMin-old.startMin : Math.max(5,Number(act.minutes)||15))};
+      else if (!protectedTime && act.plannedTimes) delete act.plannedTimes[dateStr];
       saveState(); closeModal('diaryActivityModal'); refreshAllViews();
     }
 
     function resetDiaryActivityAutoTime() {
       const id = document.getElementById('diaryActId').value, dateStr = document.getElementById('diaryActDate').value;
       const act = appState.activities.find(a => a.id === id); if (!act) return;
-      if (act.plannedTimes) delete act.plannedTimes[dateStr];
+      const old = act.plannedTimes?.[dateStr], now = new Date(), today = toISODate(now);
+      if (!activityDoneOn(act,dateStr) && dateStr >= today && !(dateStr === today && old && old.startMin <= now.getHours()*60+now.getMinutes()) && act.plannedTimes) delete act.plannedTimes[dateStr];
       if (act.dayScheduleOverrides) { delete act.dayScheduleOverrides[dateStr]; if (!Object.keys(act.dayScheduleOverrides).length) delete act.dayScheduleOverrides; }
       saveState(); closeModal('diaryActivityModal'); refreshAllViews();
     }
@@ -3923,7 +3955,7 @@
             <div class="routine-title">${escapeHtml(a.title)}</div>
             <div class="routine-hint">${escapeHtml(a.holdReason)}</div>
             <div class="routine-actions">
-              <button type="button" class="btn btn-success btn-sm" data-routine-done="${a.id}">Přesto splnit dnes</button>
+              <button type="button" class="btn btn-success btn-sm" data-routine-resume="${a.id}">Naplánovat na dnešek</button>
               <button type="button" class="btn btn-outline btn-sm" data-routine-edit="${a.id}">Upravit</button>
               <button type="button" class="btn btn-danger btn-sm" data-routine-delete="${a.id}">Smazat</button>
             </div>
