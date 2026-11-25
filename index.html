@@ -1817,7 +1817,7 @@
     <section id="tabBackup" class="hidden">
       <div class="section-card">
         <h2 class="section-title" style="margin-bottom: 10px;">Aktualizace a zálohování</h2>
-        <p>Verze 2.2.1 · Datové schéma 3. Před aktualizací vždy stáhněte zálohu. Novou verzi lze načíst tlačítkem níže.</p>
+        <p>Verze 2.2.2 · Datové schéma 3. Před aktualizací vždy stáhněte zálohu. Novou verzi lze načíst tlačítkem níže.</p>
         <div class="info-box" style="margin-bottom: 14px;">
           <strong>Důležité upozornění:</strong> Vaše data jsou uložena lokálně přímo v tomto zařízení. Při vymazání dat prohlížeče nebo odinstalaci aplikace může dojít ke ztrátě dat. Pravidelně si stahujte záložní soubor.
         </div>
@@ -1866,7 +1866,7 @@
       <div class="section-card">
         <h2 class="section-title" style="margin-bottom: 6px;">Modul MŮJ ŽIVOT</h2>
         <p style="font-size: 13.5px; color: var(--text-muted); margin: 0;">
-          Verze celku: <strong>2.2.1 (Přehled, Kalendář, Úkoly, Režim dne a Směny, Kategorie, Záloha)</strong><br />
+          Verze celku: <strong>2.2.2 (Přehled, Kalendář, Úkoly, Režim dne a Směny, Kategorie, Záloha)</strong><br />
           Společný datový formát s lokální zálohou v JSON.
         </p>
       </div>
@@ -2229,7 +2229,7 @@
     const LEGACY_CAL_KEY = 'muj_zivot_kalendar_v1';
     const LEGACY_SHIFT_KEY = 'muj_zivot_integrated_v5';
     const APP_SCHEMA_VERSION = 3;
-    const APP_VERSION = '2.2.1';
+    const APP_VERSION = '2.2.2';
     const RECOVERY_KEY = STORAGE_KEY + '_recovery';
     let storageLocked = false;
 
@@ -2878,87 +2878,6 @@
       return aStart < bEnd && aEnd > bStart;
     }
 
-    function scheduleActivitiesWithoutOverlap(activitiesList, iso) {
-      const shift = appState.shifts[iso] || null;
-      const occupied = getShiftWorkBlocks(shift).map(b => ({
-        startMin: b.startMin,
-        endMin: b.endMin
-      }));
-
-      const enriched = activitiesList.map(act => {
-        const wStart = toMinutes(act.windowStart) ?? 480;
-        const wEndRaw = toMinutes(act.windowEnd) ?? 1200;
-        const wEnd = wEndRaw <= wStart ? 1440 : wEndRaw;
-        const dur = Math.max(5, Number(act.minutes) || 15);
-        const prefMin = toMinutes(act.recommendedTime);
-        return {
-          act,
-          wStart,
-          wEnd,
-          dur,
-          windowSpan: Math.max(dur, wEnd - wStart),
-          prefMin
-        };
-      });
-
-      enriched.sort((a, b) => {
-        if (a.windowSpan !== b.windowSpan) return a.windowSpan - b.windowSpan;
-        return a.wStart - b.wStart;
-      });
-
-      const scheduledMap = new Map();
-
-      for (const item of enriched) {
-        const { act, wStart, wEnd, dur, prefMin } = item;
-        const latestStart = wEnd - dur;
-        let bestStart = null;
-
-        if (latestStart >= wStart) {
-          const target = prefMin !== null && prefMin >= wStart && prefMin <= latestStart
-            ? prefMin
-            : wStart + Math.floor((latestStart - wStart) / 2);
-
-          let bestDistance = Infinity;
-          for (let cand = wStart; cand <= latestStart; cand += 5) {
-            const candEnd = cand + dur;
-            const hasConflict = occupied.some(occ =>
-              intervalsOverlap(cand, candEnd, occ.startMin - GAP_BETWEEN_TASKS, occ.endMin + GAP_BETWEEN_TASKS)
-            );
-            if (!hasConflict) {
-              const dist = Math.abs(cand - target);
-              if (dist < bestDistance) {
-                bestDistance = dist;
-                bestStart = cand;
-              }
-            }
-          }
-        }
-
-        if (bestStart !== null) {
-          occupied.push({ startMin: bestStart, endMin: bestStart + dur });
-          scheduledMap.set(act.id, {
-            startMin: bestStart,
-            endMin: bestStart + dur,
-            suggestedTime: fromMinutes(bestStart),
-            suggestedEndTime: fromMinutes(bestStart + dur),
-            windowText: `${act.windowStart || '08:00'}–${act.windowEnd || '20:00'}`,
-            conflict: false
-          });
-        } else {
-          scheduledMap.set(act.id, {
-            startMin: wStart,
-            endMin: wStart + dur,
-            suggestedTime: fromMinutes(wStart),
-            suggestedEndTime: fromMinutes(wStart + dur),
-            windowText: `${act.windowStart || '08:00'}–${act.windowEnd || '20:00'}`,
-            conflict: true
-          });
-        }
-      }
-
-      return scheduledMap;
-    }
-
     function evaluateCalendarDayLoad(iso) {
       const shift = appState.shifts[iso];
       if (!shift) {
@@ -3004,7 +2923,7 @@
 
     function getRoutineHint(act, dayLoad, shift, timingInfo) {
       const baseTiming = timingInfo.conflict
-        ? `Rozmezí ${timingInfo.windowText} koliduje se směnou/cestou – zvaž úpravu rozmezí nebo odložení.`
+        ? `V rozmezí ${timingInfo.windowText} není vhodné volné místo nebo je pevný čas v konfliktu.`
         : `Naplánováno ${timingInfo.suggestedTime}–${timingInfo.suggestedEndTime} (v rozmezí ${timingInfo.windowText}, bez překryvu).`;
 
       if (act.kind === 'interval') {
@@ -3015,114 +2934,33 @@
       return baseTiming;
     }
 
-    function classifyTodayActivities() {
-      const todayStr = toISODate(new Date());
-      const dayLoad = evaluateCalendarDayLoad(todayStr);
-      const todayShift = appState.shifts[todayStr] || null;
-
-      const overdueRaw = [];
-      const recommendedRaw = [];
-      const held = [];
-      const done = [];
-
-      for (const act of appState.activities) {
-        if (act.lastDoneIso === todayStr) {
-          done.push(act);
-          continue;
-        }
-
-        if (act.kind === 'daily') {
-          recommendedRaw.push({ ...act, isOverdue: false });
-          continue;
-        }
-
-        const daysSince = act.lastDoneIso ? diffDaysISO(act.lastDoneIso, todayStr) : act.maxDays + 1;
-        const isOverdue = daysSince > act.maxDays;
-        const isDueWindow = daysSince >= act.minDays;
-        const isPostponedFuture = act.postponedUntilIso && act.postponedUntilIso > todayStr;
-
-        if (isPostponedFuture && !isOverdue) {
-          held.push({
-            ...act,
-            holdReason: `Odloženo na klidnější den (${formatDayShortWithName(act.postponedUntilIso)}).`
-          });
-          continue;
-        }
-
-        if (!isDueWindow && !isOverdue) {
-          continue;
-        }
-
-        if (act.effort === 'high' && dayLoad.level === 'hard' && !isOverdue) {
-          held.push({
-            ...act,
-            holdReason: 'Vysoká náročnost + náročná směna v kalendáři → čeká na klidnější den.'
-          });
-          continue;
-        }
-
-        const item = { ...act, daysSince, isOverdue };
-        if (isOverdue) overdueRaw.push(item);
-        else recommendedRaw.push(item);
-      }
-
-      const activeForScheduling = [...overdueRaw, ...recommendedRaw];
-      const scheduleMap = scheduleActivitiesWithoutOverlap(activeForScheduling, todayStr);
-
-      const overdue = overdueRaw.map(act => {
-        const timingInfo = scheduleMap.get(act.id);
-        return { ...act, timingInfo, hint: getRoutineHint(act, dayLoad, todayShift, timingInfo) };
-      });
-
-      const recommended = recommendedRaw.map(act => {
-        const timingInfo = scheduleMap.get(act.id);
-        return { ...act, timingInfo, hint: getRoutineHint(act, dayLoad, todayShift, timingInfo) };
-      });
-
-      overdue.sort((a, b) => a.timingInfo.startMin - b.timingInfo.startMin);
-      recommended.sort((a, b) => a.timingInfo.startMin - b.timingInfo.startMin);
-
-      return { dayLoad, todayShift, overdue, recommended, held, done };
+    function activityDoneOn(act, iso) {
+      return act.lastDoneIso === iso || (appState.completedLog[iso] || []).includes(act.title);
     }
-
-    function getSuggestedCalendarActivitiesForDay(iso) {
-      const todayStr = toISODate(new Date());
-      const dayLoad = evaluateCalendarDayLoad(iso);
-      const candidates = [];
-
-      for (const act of appState.activities) {
-        if (act.kind === 'daily') {
-          candidates.push(act);
-          continue;
-        }
-
-        const baseAnchor = act.lastDoneIso || addDaysISO(todayStr, -(act.minDays || 2));
-        const deltaFromBase = diffDaysISO(baseAnchor, iso);
-        const minD = act.minDays || 2;
-        const maxD = act.maxDays || 3;
-
-        if (deltaFromBase >= minD && deltaFromBase <= maxD + 2) {
-          if (act.effort === 'high' && dayLoad.level === 'hard' && deltaFromBase <= maxD) {
-            continue;
-          }
-          candidates.push(act);
-        }
-      }
-
-      const scheduleMap = scheduleActivitiesWithoutOverlap(candidates, iso);
-      return candidates.map(act => {
-        const t = scheduleMap.get(act.id);
-        return {
-          id: act.id,
-          title: act.title,
-          startMin: t.startMin,
-          endMin: t.endMin,
-          suggestedTime: t.suggestedTime,
-          suggestedEndTime: t.suggestedEndTime,
-          windowText: t.windowText,
-          conflict: t.conflict
-        };
+    function activityCandidates(iso) {
+      const today = toISODate(new Date());
+      return appState.activities.filter(act => {
+        if (activityDoneOn(act, iso)) return true;
+        if (act.postponedUntilIso && iso < act.postponedUntilIso) return false;
+        if (iso < today) return !!act.plannedTimes?.[iso];
+        if (act.kind === 'daily') return true;
+        const days = act.lastDoneIso ? diffDaysISO(act.lastDoneIso, iso) : (act.maxDays || 3)+1;
+        return days >= (act.minDays || 2) && (act.effort !== 'high' || evaluateCalendarDayLoad(iso).level !== 'hard' || days > (act.maxDays || 3));
       });
+    }
+    function classifyTodayActivities() {
+      const iso = toISODate(new Date()), dayLoad = evaluateCalendarDayLoad(iso), todayShift = appState.shifts[iso] || null;
+      const candidates = activityCandidates(iso), map = getFixedAndFlexibleItemsForDay(candidates, iso);
+      const overdue = [], recommended = [], held = [], done = [];
+      for (const act of appState.activities) {
+        const daysSince = act.lastDoneIso ? diffDaysISO(act.lastDoneIso, iso) : (act.maxDays || 3)+1;
+        const isOverdue = act.kind !== 'daily' && daysSince > (act.maxDays || 3);
+        const timingInfo = map.get(act.id);
+        if (activityDoneOn(act, iso)) done.push({...act,timingInfo});
+        else if (timingInfo) (isOverdue ? overdue : recommended).push({...act,daysSince,isOverdue,timingInfo,hint:getRoutineHint(act,dayLoad,todayShift,timingInfo)});
+        else if (act.postponedUntilIso > iso || (act.kind !== 'daily' && daysSince >= (act.minDays || 2))) held.push({...act,holdReason:act.postponedUntilIso > iso ? `Odloženo na ${formatDayShortWithName(act.postponedUntilIso)}` : 'Čeká na klidnější den.'});
+      }
+      return {dayLoad,todayShift,overdue,recommended,held,done};
     }
 
     function markActivityDone(id) {
@@ -3161,6 +2999,7 @@
       if (!act) return;
       const nextDay = findNextCalmerDay(todayStr);
       act.postponedUntilIso = nextDay;
+      if (act.plannedTimes) delete act.plannedTimes[todayStr];
       saveState();
       showToast(`Odloženo na ${formatDayShortWithName(nextDay)}`);
       refreshAllViews();
@@ -3245,7 +3084,8 @@
     }
 
     function getFixedAndFlexibleItemsForDay(activitiesList, iso) {
-      const shift = appState.settings.showShiftsInCalendar ? (appState.shifts[iso] || null) : null;
+      const shift = appState.shifts[iso] || null;
+      const now = new Date(), today = toISODate(now), floor = iso === today ? now.getHours()*60+now.getMinutes()+(now.getSeconds()>0?1:0) : 0;
       const shiftBlocks = getShiftWorkBlocks(shift).map(b => ({ startMin: b.startMin, endMin: b.endMin, source: 'shift' }));
       const eventAndTaskBlocks = [];
       for (const occ of getOccurrencesInRange(iso, iso)) {
@@ -3267,8 +3107,10 @@
       for (const act of activitiesList) {
         const ov = getActivityDayOverride(act, iso);
         const dur = Math.max(5, Number(act.minutes) || 15);
-        const isFixed = !!(ov && ov.fixedTime);
-        const explicitStart = (ov && ov.time) ? toMinutes(ov.time) : toMinutes(act.recommendedTime);
+        const saved = act.plannedTimes?.[iso];
+        const locked = saved && (activityDoneOn(act,iso) || iso < today || (iso === today && saved.startMin < floor));
+        const isFixed = !!(ov && ov.fixedTime) || !!locked;
+        const explicitStart = locked ? saved.startMin : (ov && ov.time) ? toMinutes(ov.time) : toMinutes(act.recommendedTime);
         if (isFixed && explicitStart !== null) {
           fixedItems.push({ act, startMin: explicitStart, endMin: explicitStart + dur, isFixed: true, isCustomTime: !!(ov && ov.time) });
         } else flexibleItems.push({ act, dur, explicitStart, isCustomTime: !!(ov && ov.time) });
@@ -3287,9 +3129,9 @@
       }
 
       const enrichedFlex = flexibleItems.map(item => {
-        const wStart = toMinutes(item.act.windowStart) ?? 480;
+        const wStart = Math.max(floor, toMinutes(item.act.windowStart) ?? 480);
         const wEndRaw = toMinutes(item.act.windowEnd) ?? 1200;
-        const wEnd = wEndRaw <= wStart ? 1440 : wEndRaw;
+        const wEnd = wEndRaw <= (toMinutes(item.act.windowStart) ?? 480) ? 1440 : wEndRaw;
         return { ...item, wStart, wEnd, windowSpan: Math.max(item.dur, wEnd - wStart) };
       }).sort((a, b) => a.windowSpan - b.windowSpan || a.wStart - b.wStart);
 
@@ -3314,9 +3156,23 @@
           occupied.push({ startMin: chosenStart, endMin: chosenStart + dur });
           scheduledMap.set(act.id, { startMin: chosenStart, endMin: chosenStart + dur, suggestedTime: fromMinutes(chosenStart), suggestedEndTime: fromMinutes(chosenStart + dur), windowText: `${act.windowStart || '08:00'}–${act.windowEnd || '20:00'}`, isFixed: false, isCustomTime, shiftedFromPreferred, conflict: false });
         } else {
-          const fallbackStart = explicitStart !== null ? explicitStart : wStart;
-          scheduledMap.set(act.id, { startMin: fallbackStart, endMin: fallbackStart + dur, suggestedTime: fromMinutes(fallbackStart), suggestedEndTime: fromMinutes(fallbackStart + dur), windowText: `${act.windowStart || '08:00'}–${act.windowEnd || '20:00'}`, isFixed: false, isCustomTime, shiftedFromPreferred: true, conflict: true });
+          const fallbackStart = null;
+          scheduledMap.set(act.id, { startMin: null, endMin: null, suggestedTime: "Nenaplánováno", suggestedEndTime: "", windowText: `${act.windowStart || '08:00'}–${act.windowEnd || '20:00'}`, isFixed: false, isCustomTime, shiftedFromPreferred: true, conflict: true });
         }
+      }
+      if (iso === today) {
+        let changed = false;
+        for (const act of activitiesList) {
+          const t = scheduledMap.get(act.id);
+          if (!t || t.startMin === null) continue;
+          const original = appState.activities.find(a => a.id === act.id);
+          if (!original) continue;
+          const old = original.plannedTimes?.[iso];
+          if (!old || old.startMin !== t.startMin || old.endMin !== t.endMin) {
+            (original.plannedTimes ||= {})[iso] = {startMin:t.startMin,endMin:t.endMin}; changed = true;
+          }
+        }
+        if (changed) saveState();
       }
       return scheduledMap;
     }
@@ -3361,20 +3217,15 @@
         }
       }
 
-      const dayLoad = evaluateCalendarDayLoad(dateStr);
-      const candidates = appState.activities.filter(act => {
-        const done = act.lastDoneIso === dateStr || (Array.isArray(appState.completedLog[dateStr]) && appState.completedLog[dateStr].includes(act.title));
-        if (done || act.kind === 'daily') return true;
-        const daysSince = act.lastDoneIso ? diffDaysISO(act.lastDoneIso, dateStr) : (act.maxDays || 3) + 1;
-        const overdue = daysSince > (act.maxDays || 3), due = daysSince >= (act.minDays || 2);
-        if (!due && !overdue) return false;
-        if (act.effort === 'high' && dayLoad.level === 'hard' && !overdue) return false;
-        return true;
-      });
+      const candidates = activityCandidates(dateStr);
       const scheduleMap = getFixedAndFlexibleItemsForDay(candidates, dateStr);
       for (const act of candidates) {
         const t = scheduleMap.get(act.id); if (!t) continue;
         const isDone = act.lastDoneIso === dateStr || (Array.isArray(appState.completedLog[dateStr]) && appState.completedLog[dateStr].includes(act.title));
+        if (t.startMin === null) {
+          allDayItems.push({kind:'routineActivity',activity:act,dateStr,timing:t,isDoneOnDay:isDone,category:{id:'routine',color:'#b45309'},displayTitle:act.title,spanLabel:'Nenaplánováno',isAllDay:true});
+          continue;
+        }
         const modeLabel = isDone ? 'splněno' : (t.isFixed ? 'pevný čas' : (t.shiftedFromPreferred ? 'přesunuto kvůli překryvu' : 'doporučeno'));
         timedItems.push({ kind: 'routineActivity', activity: act, dateStr, timing: t, isDoneOnDay: isDone, category: { id: 'routine', name: 'Režim dne', color: isDone ? '#15803d' : (t.conflict ? '#b45309' : '#0f766e') }, displayTitle: `${isDone ? '✓ ' : ''}${act.title}`, effectiveStart: t.suggestedTime, effectiveEnd: t.suggestedEndTime, timeSpanText: `${t.suggestedTime}–${t.suggestedEndTime} · ${modeLabel}`, hour: Math.floor(t.startMin / 60), isAllDay: false, isMultiDay: false, occurrenceDate: dateStr, occurrenceEndDate: dateStr });
       }
@@ -3674,12 +3525,14 @@
       const time = document.getElementById('diaryActTimeInput').value;
       const fixedTime = document.getElementById('diaryActFixedTime').checked;
       act.dayScheduleOverrides[dateStr] = { time: time || null, fixedTime };
+      if (act.plannedTimes) delete act.plannedTimes[dateStr];
       saveState(); closeModal('diaryActivityModal'); refreshAllViews();
     }
 
     function resetDiaryActivityAutoTime() {
       const id = document.getElementById('diaryActId').value, dateStr = document.getElementById('diaryActDate').value;
       const act = appState.activities.find(a => a.id === id); if (!act) return;
+      if (act.plannedTimes) delete act.plannedTimes[dateStr];
       if (act.dayScheduleOverrides) { delete act.dayScheduleOverrides[dateStr]; if (!Object.keys(act.dayScheduleOverrides).length) delete act.dayScheduleOverrides; }
       saveState(); closeModal('diaryActivityModal'); refreshAllViews();
     }
@@ -3763,7 +3616,7 @@
       container.querySelectorAll('[data-occ-type="allday"]').forEach(el => {
         el.addEventListener('click', (e) => {
           e.stopPropagation();
-          handleCalendarItemClick(allDayItems[Number(el.dataset.occIdx)]);
+          const item = allDayItems[Number(el.dataset.occIdx)]; if (item?.kind === 'routineActivity') openDiaryActivityModal(item.activity,item.dateStr,item.timing,item.isDoneOnDay); else handleCalendarItemClick(item);
         });
       });
 
@@ -3978,7 +3831,7 @@
 
       container.querySelectorAll('[data-month-occ-idx]').forEach(el => {
         el.addEventListener('click', () => {
-          handleCalendarItemClick(combined[Number(el.dataset.monthOccIdx)]);
+          const item = combined[Number(el.dataset.monthOccIdx)]; if (item?.kind === 'routineActivity') openDiaryActivityModal(item.activity,item.dateStr,item.timing,item.isDoneOnDay); else handleCalendarItemClick(item);
         });
       });
     }
