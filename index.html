@@ -1632,7 +1632,7 @@
       </div>
 
       <div class="section-card">
-        <h2 class="section-title" style="margin-bottom:10px;">Aktivní doporučení pro dnešek</h2>
+        <h2 class="section-title" style="margin-bottom:10px;">Aktivní doporučení pro dnešek</h2><button class="btn btn-outline btn-sm" onclick="document.getElementById('allActivitiesManageList').scrollIntoView({behavior:'smooth'})">Všechny aktivity</button>
         <div id="routineActiveList"></div>
       </div>
 
@@ -1691,7 +1691,7 @@
             <span class="form-label" style="opacity:0;">Akce</span>
             <button type="button" class="btn btn-secondary btn-sm" id="autoRecTimeBtn">Střed rozmezí</button>
           </div>
-          <div class="form-group" id="minDaysWrap">
+          <div class="form-group"><label class="form-label">Neplánovat do (včetně)</label><input type="date" id="actPauseUntil"></div><div class="form-group"><label class="form-label">Plánovat nejdéle do (včetně)</label><input type="date" id="actValidUntil"></div><div class="form-group" id="minDaysWrap">
             <label class="form-label" for="actMinDaysInput">Interval od (dnů)</label>
             <input type="number" id="actMinDaysInput" value="2" min="1" max="30" />
           </div>
@@ -1817,7 +1817,7 @@
     <section id="tabBackup" class="hidden">
       <div class="section-card">
         <h2 class="section-title" style="margin-bottom: 10px;">Aktualizace a zálohování</h2>
-        <p>Verze 2.2.3 · Datové schéma 3. Před aktualizací vždy stáhněte zálohu. Novou verzi lze načíst tlačítkem níže.</p>
+        <p>Verze 2.3.0 · Datové schéma 3. Před aktualizací vždy stáhněte zálohu. Novou verzi lze načíst tlačítkem níže.</p>
         <div class="info-box" style="margin-bottom: 14px;">
           <strong>Důležité upozornění:</strong> Vaše data jsou uložena lokálně přímo v tomto zařízení. Při vymazání dat prohlížeče nebo odinstalaci aplikace může dojít ke ztrátě dat. Pravidelně si stahujte záložní soubor.
         </div>
@@ -1866,7 +1866,7 @@
       <div class="section-card">
         <h2 class="section-title" style="margin-bottom: 6px;">Modul MŮJ ŽIVOT</h2>
         <p style="font-size: 13.5px; color: var(--text-muted); margin: 0;">
-          Verze celku: <strong>2.2.3 (Přehled, Kalendář, Úkoly, Režim dne a Směny, Kategorie, Záloha)</strong><br />
+          Verze celku: <strong>2.3.0 (Přehled, Kalendář, Úkoly, Režim dne a Směny, Kategorie, Záloha)</strong><br />
           Společný datový formát s lokální zálohou v JSON.
         </p>
       </div>
@@ -2229,7 +2229,7 @@
     const LEGACY_CAL_KEY = 'muj_zivot_kalendar_v1';
     const LEGACY_SHIFT_KEY = 'muj_zivot_integrated_v5';
     const APP_SCHEMA_VERSION = 3;
-    const APP_VERSION = '2.2.3';
+    const APP_VERSION = '2.3.0';
     const RECOVERY_KEY = STORAGE_KEY + '_recovery';
     let storageLocked = false;
 
@@ -2941,6 +2941,10 @@
       const today = toISODate(new Date());
       return appState.activities.filter(act => {
         if (activityDoneOn(act, iso)) return true;
+        if (act.skippedDates?.[iso]) return false;
+        if (act.extraDates?.[iso]) return true;
+        if (iso < today) return !!act.plannedTimes?.[iso] || !!act.seenDates?.[iso];
+        if (act.pauseUntil && iso <= act.pauseUntil || act.validUntil && iso > act.validUntil) return false;
         if (act.postponedUntilIso && iso < act.postponedUntilIso) return false;
         if (act.forcePlanIso === iso || act.plannedTimes?.[iso] && iso <= today) return true;
         if (iso < today) return !!act.plannedTimes?.[iso];
@@ -2959,7 +2963,7 @@
         const timingInfo = map.get(act.id);
         if (activityDoneOn(act, iso)) done.push({...act,timingInfo});
         else if (timingInfo) (isOverdue ? overdue : recommended).push({...act,daysSince,isOverdue,timingInfo,hint:getRoutineHint(act,dayLoad,todayShift,timingInfo)});
-        else if (act.postponedUntilIso > iso || (act.kind !== 'daily' && daysSince >= (act.minDays || 2))) held.push({...act,holdReason:act.postponedUntilIso > iso ? `Odloženo na ${formatDayShortWithName(act.postponedUntilIso)}` : 'Čeká na klidnější den.'});
+        else if ((!act.pauseUntil || iso > act.pauseUntil) && (!act.validUntil || iso <= act.validUntil) && !act.skippedDates?.[iso] && (act.postponedUntilIso > iso || (act.kind !== 'daily' && daysSince >= (act.minDays || 2)))) held.push({...act,holdReason:act.postponedUntilIso > iso ? `Odloženo na ${formatDayShortWithName(act.postponedUntilIso)}` : 'Čeká na klidnější den.'});
       }
       return {dayLoad,todayShift,overdue,recommended,held,done};
     }
@@ -3029,6 +3033,8 @@
       document.getElementById('actWindowStartInput').value = act.windowStart || '08:00';
       document.getElementById('actWindowEndInput').value = act.windowEnd || '20:00';
       document.getElementById('actRecTimeInput').value = act.recommendedTime || '';
+      document.getElementById('actPauseUntil').value = act.pauseUntil || '';
+      document.getElementById('actValidUntil').value = act.validUntil || '';
       document.getElementById('actMinDaysInput').value = act.minDays || 2;
       document.getElementById('actMaxDaysInput').value = act.maxDays || 3;
 
@@ -3054,6 +3060,8 @@
       document.getElementById('actWindowStartInput').value = '08:00';
       document.getElementById('actWindowEndInput').value = '20:00';
       document.getElementById('actRecTimeInput').value = '';
+      document.getElementById('actPauseUntil').value = '';
+      document.getElementById('actValidUntil').value = '';
       document.getElementById('actMinDaysInput').value = '2';
       document.getElementById('actMaxDaysInput').value = '3';
       document.getElementById('minDaysWrap').classList.remove('hidden');
@@ -3188,6 +3196,7 @@
           const original = appState.activities.find(a => a.id === act.id);
           if (!original) continue;
           const old = original.plannedTimes?.[iso];
+          if (iso === today && !original.seenDates?.[iso]) { (original.seenDates ||= {})[iso] = true; changed = true; }
           if (t.startMin === null) {
             if (old && !activityDoneOn(act,iso)) { delete original.plannedTimes[iso]; changed = true; }
             continue;
@@ -3516,9 +3525,20 @@
 
     let diaryActivityModalContext = null;
 
-    function openDiaryActivityModal(act, dateStr, timing, isDone) {
+    function openDiaryActivityModal(act, dateStr, timing, isDone, extra = false) {
       const ov = getActivityDayOverride(act, dateStr) || {};
-      diaryActivityModalContext = { actId: act.id, dateStr };
+      diaryActivityModalContext = { actId: act.id, dateStr, extra };
+      const today = toISODate(new Date());
+      document.getElementById('diaryMoveDate').min = today;
+      document.getElementById('diaryMoveDate').value = dateStr < today ? today : dateStr;
+      document.getElementById('diaryMoveActions').classList.toggle('hidden', isDone && !extra);
+      document.getElementById('diarySkip').classList.toggle('hidden', extra);
+      document.getElementById('diaryReplan').classList.toggle('hidden', extra);
+      document.getElementById('diaryCalmer').classList.toggle('hidden', extra);
+      document.getElementById('diaryMove').textContent = extra ? 'Mimořádně naplánovat' : 'Přesunout na vybraný den';
+      document.getElementById('btnDiaryActToggleDone').classList.toggle('hidden',extra);
+      document.getElementById('btnDiaryActResetAuto').classList.toggle('hidden',extra);
+      document.getElementById('btnSaveDiaryActModal').classList.toggle('hidden',extra);
       document.getElementById('diaryActId').value = act.id;
       document.getElementById('diaryActDate').value = dateStr;
       document.getElementById('diaryActModalTitle').textContent = act.title;
@@ -3530,6 +3550,29 @@
       openModal('diaryActivityModal');
     }
 
+    function moveDiaryOccurrence(mode) {
+      const ctx = diaryActivityModalContext; if (!ctx) return;
+      const act = appState.activities.find(a=>a.id===ctx.actId); if(!act) return;
+      const today=toISODate(new Date()), source=ctx.dateStr;
+      if (!ctx.extra && activityDoneOn(act,source)) return;
+      let target=mode==='skip' ? null : mode==='calmer' ? findNextCalmerDay(source < today ? today : source) : mode==='replan' ? (source < today ? today : source) : document.getElementById('diaryMoveDate').value;
+      if(mode!=='skip' && (!target || target<today || activityDoneOn(act,target))) { showToast('Vyberte nesplněný den od dneška.'); return; }
+      if (!ctx.extra) {
+        if(source!==target) (act.skippedDates ||= {})[source]=true;
+        if(act.extraDates) delete act.extraDates[source];
+        if(act.plannedTimes) delete act.plannedTimes[source];
+        if(act.dayScheduleOverrides) delete act.dayScheduleOverrides[source];
+        if(act.forcePlanIso===source) delete act.forcePlanIso;
+      }
+      if(target) {
+        (act.extraDates ||= {})[target]=true;
+        if(act.skippedDates) delete act.skippedDates[target];
+        if(act.plannedTimes) delete act.plannedTimes[target];
+        if(act.dayScheduleOverrides) delete act.dayScheduleOverrides[target];
+      }
+      saveState(); closeModal('diaryActivityModal'); refreshAllViews();
+      showToast(target ? 'Naplánováno na '+formatDayShortWithName(target)+' (podle volného času)' : 'Výskyt vynechán');
+    }
     function toggleDiaryActivityDone(actId, dateStr) {
       const act = appState.activities.find(a => a.id === actId); if (!act) return;
       if (!Array.isArray(appState.completedLog[dateStr])) appState.completedLog[dateStr] = [];
@@ -3625,7 +3668,7 @@
           html += `<div class="diary-event-text ${item.kind === 'routineActivity' ? 'diary-routine-item' : ''}" data-occ-type="timed" data-occ-idx="${timedIdx}" style="color:${item.category.color};">
             <span>${escapeHtml(impPrefix + item.displayTitle)}</span>
             ${showSpan ? `<span class="diary-event-span">(${escapeHtml(item.timeSpanText)})</span>` : ''}
-            ${item.kind === 'routineActivity' ? `<span class="diary-activity-actions"><button type="button" class="diary-act-check" data-diary-act-done="${escapeHtml(item.activity.id)}" data-diary-act-date="${dateStr}" title="${item.isDoneOnDay ? 'Vrátit aktivitu' : 'Splnit aktivitu'}">${item.isDoneOnDay ? '↶' : '✓'}</button><button type="button" class="diary-act-edit" data-diary-act-edit="${escapeHtml(item.activity.id)}" data-diary-act-date="${dateStr}" title="Upravit aktivitu">⋯</button></span>` : ''}
+
             ${item.kind === 'event' && item.event.location ? `<span class="diary-event-loc">• ${escapeHtml(item.event.location)}</span>` : ''}
           </div>`;
         });
@@ -4001,7 +4044,7 @@
                   <span class="pill">${a.kind === 'daily' ? 'Denní' : `Interval ${a.minDays}–${a.maxDays} dny`}</span>
                 </div>
               </div>
-              <div class="routine-actions">
+              <div class="routine-hint">${a.pauseUntil ? `Neplánovat do ${escapeHtml(a.pauseUntil)} · ` : ""}${a.validUntil ? `Platí do ${escapeHtml(a.validUntil)}` : ""}</div><div class="routine-actions"><button type="button" class="btn btn-outline btn-sm" data-extra-act="${escapeHtml(a.id)}">Mimořádně naplánovat</button>
                 <button type="button" class="btn btn-outline btn-sm" data-routine-edit="${a.id}">Upravit</button>
                 <button type="button" class="btn btn-danger btn-sm" data-routine-delete="${a.id}">Smazat</button>
               </div>
@@ -4009,6 +4052,7 @@
           </div>`;
         }).join('');
         bindRoutineActionButtons(manageList);
+        manageList.querySelectorAll('[data-extra-act]').forEach(btn => btn.onclick = () => { const act = appState.activities.find(a=>a.id===btn.dataset.extraAct); if(act) openDiaryActivityModal(act,todayStr,null,activityDoneOn(act,todayStr),true); });
       }
 
       // Plánovač směn
@@ -5159,6 +5203,8 @@
         if (uiState.editingActivityId) {
           const existing = appState.activities.find(a => a.id === uiState.editingActivityId);
           if (existing) {
+            existing.pauseUntil = document.getElementById('actPauseUntil').value;
+            existing.validUntil = document.getElementById('actValidUntil').value;
             existing.title = title;
             existing.kind = kind;
             existing.minutes = minutes;
@@ -5177,6 +5223,8 @@
         } else {
           appState.activities.push({
             id: generateId('act'),
+            pauseUntil: document.getElementById('actPauseUntil').value,
+            validUntil: document.getElementById('actValidUntil').value,
             title,
             kind,
             minutes,
@@ -5503,7 +5551,7 @@
         <div class="form-group"><label class="form-label" for="diaryActTimeInput">Čas aktivity pro tento den</label><input type="time" id="diaryActTimeInput" class="form-control" /></div>
         <label class="checkbox-row"><input type="checkbox" id="diaryActFixedTime" /><span>Pevný čas (systém nebude přesouvat při překryvu)</span></label>
       </div>
-      <div class="modal-footer" style="flex-wrap:wrap; justify-content:space-between;"><div style="display:flex; gap:8px; flex-wrap:wrap;"><button type="button" class="btn btn-success btn-sm" id="btnDiaryActToggleDone">Splnit</button><button type="button" class="btn btn-outline btn-sm" id="btnDiaryActResetAuto">Automatický čas</button></div><div style="display:flex; gap:8px;"><button type="button" class="btn btn-outline btn-sm" id="btnCancelDiaryActModal">Zavřít</button><button type="button" class="btn btn-primary btn-sm" id="btnSaveDiaryActModal">Uložit čas</button></div></div>
+      <div class="modal-body" id="diaryMoveActions"><label class="form-label">Nový den</label><input type="date" id="diaryMoveDate" class="form-control"><div class="routine-actions"><button class="btn btn-outline btn-sm" id="diaryMove" onclick="moveDiaryOccurrence('move')">Přesunout</button><button class="btn btn-outline btn-sm" id="diaryReplan" onclick="moveDiaryOccurrence('replan')">Naplánovat znovu</button><button class="btn btn-outline btn-sm" id="diaryCalmer" onclick="moveDiaryOccurrence('calmer')">Odložit na klidnější den</button><button class="btn btn-outline btn-sm" id="diarySkip" onclick="moveDiaryOccurrence('skip')">Vynechat výskyt</button></div></div><div class="modal-footer" style="flex-wrap:wrap; justify-content:space-between;"><div style="display:flex; gap:8px; flex-wrap:wrap;"><button type="button" class="btn btn-success btn-sm" id="btnDiaryActToggleDone">Splnit</button><button type="button" class="btn btn-outline btn-sm" id="btnDiaryActResetAuto">Automatický čas</button></div><div style="display:flex; gap:8px;"><button type="button" class="btn btn-outline btn-sm" id="btnCancelDiaryActModal">Zavřít</button><button type="button" class="btn btn-primary btn-sm" id="btnSaveDiaryActModal">Uložit čas</button></div></div>
     </div>
   </div>
 
