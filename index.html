@@ -1817,7 +1817,7 @@
     <section id="tabBackup" class="hidden">
       <div class="section-card">
         <h2 class="section-title" style="margin-bottom: 10px;">Aktualizace a zálohování</h2>
-        <p>Verze 2.3.0 · Datové schéma 3. Před aktualizací vždy stáhněte zálohu. Novou verzi lze načíst tlačítkem níže.</p>
+        <p>Verze 2.3.1 · Datové schéma 3. Před aktualizací vždy stáhněte zálohu. Novou verzi lze načíst tlačítkem níže.</p>
         <div class="info-box" style="margin-bottom: 14px;">
           <strong>Důležité upozornění:</strong> Vaše data jsou uložena lokálně přímo v tomto zařízení. Při vymazání dat prohlížeče nebo odinstalaci aplikace může dojít ke ztrátě dat. Pravidelně si stahujte záložní soubor.
         </div>
@@ -1866,7 +1866,7 @@
       <div class="section-card">
         <h2 class="section-title" style="margin-bottom: 6px;">Modul MŮJ ŽIVOT</h2>
         <p style="font-size: 13.5px; color: var(--text-muted); margin: 0;">
-          Verze celku: <strong>2.3.0 (Přehled, Kalendář, Úkoly, Režim dne a Směny, Kategorie, Záloha)</strong><br />
+          Verze celku: <strong>2.3.1 (Přehled, Kalendář, Úkoly, Režim dne a Směny, Kategorie, Záloha)</strong><br />
           Společný datový formát s lokální zálohou v JSON.
         </p>
       </div>
@@ -2229,7 +2229,7 @@
     const LEGACY_CAL_KEY = 'muj_zivot_kalendar_v1';
     const LEGACY_SHIFT_KEY = 'muj_zivot_integrated_v5';
     const APP_SCHEMA_VERSION = 3;
-    const APP_VERSION = '2.3.0';
+    const APP_VERSION = '2.3.1';
     const RECOVERY_KEY = STORAGE_KEY + '_recovery';
     let storageLocked = false;
 
@@ -3157,11 +3157,11 @@
       }
 
       const enrichedFlex = flexibleItems.map(item => {
-        const wStart = Math.max(floor, toMinutes(item.act.windowStart) ?? 480);
+        const wStart = Math.max(floor, toMinutes(item.act.windowStart) ?? 480, item.isCustomTime && item.explicitStart !== null ? item.explicitStart : 0);
         const wEndRaw = toMinutes(item.act.windowEnd) ?? 1200;
         const wEnd = wEndRaw <= (toMinutes(item.act.windowStart) ?? 480) ? 1440 : wEndRaw;
         return { ...item, wStart, wEnd, windowSpan: Math.max(item.dur, wEnd - wStart) };
-      }).sort((a, b) => a.windowSpan - b.windowSpan || a.wStart - b.wStart);
+      }).sort((a, b) => Number(b.isCustomTime) - Number(a.isCustomTime) || a.windowSpan - b.windowSpan || a.wStart - b.wStart);
 
       for (const item of enrichedFlex) {
         const { act, dur, wStart, wEnd, explicitStart, isCustomTime } = item;
@@ -3597,7 +3597,7 @@
       const old = act.plannedTimes?.[dateStr];
       const start = toMinutes(time);
       const now = new Date(), today = toISODate(now);
-      const protectedTime = activityDoneOn(act,dateStr) || dateStr < today || (dateStr === today && old && old.startMin <= now.getHours()*60+now.getMinutes());
+      const protectedTime = activityDoneOn(act,dateStr) || dateStr < today;
       if (protectedTime && start !== null) (act.plannedTimes ||= {})[dateStr] = {startMin:start,endMin:start+(old ? old.endMin-old.startMin : Math.max(5,Number(act.minutes)||15))};
       else if (!protectedTime && act.plannedTimes) delete act.plannedTimes[dateStr];
       saveState(); closeModal('diaryActivityModal'); refreshAllViews();
