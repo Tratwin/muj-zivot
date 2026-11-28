@@ -1817,7 +1817,7 @@
     <section id="tabBackup" class="hidden">
       <div class="section-card">
         <h2 class="section-title" style="margin-bottom: 10px;">Aktualizace a zálohování</h2>
-        <p>Verze 2.3.2 · Datové schéma 3. Před aktualizací vždy stáhněte zálohu. Novou verzi lze načíst tlačítkem níže.</p>
+        <p>Verze 2.3.3 · Datové schéma 3. Před aktualizací vždy stáhněte zálohu. Novou verzi lze načíst tlačítkem níže.</p>
         <div class="info-box" style="margin-bottom: 14px;">
           <strong>Důležité upozornění:</strong> Vaše data jsou uložena lokálně přímo v tomto zařízení. Při vymazání dat prohlížeče nebo odinstalaci aplikace může dojít ke ztrátě dat. Pravidelně si stahujte záložní soubor.
         </div>
@@ -1866,7 +1866,7 @@
       <div class="section-card">
         <h2 class="section-title" style="margin-bottom: 6px;">Modul MŮJ ŽIVOT</h2>
         <p style="font-size: 13.5px; color: var(--text-muted); margin: 0;">
-          Verze celku: <strong>2.3.2 (Přehled, Kalendář, Úkoly, Režim dne a Směny, Kategorie, Záloha)</strong><br />
+          Verze celku: <strong>2.3.3 (Přehled, Kalendář, Úkoly, Režim dne a Směny, Kategorie, Záloha)</strong><br />
           Společný datový formát s lokální zálohou v JSON.
         </p>
       </div>
@@ -2229,7 +2229,7 @@
     const LEGACY_CAL_KEY = 'muj_zivot_kalendar_v1';
     const LEGACY_SHIFT_KEY = 'muj_zivot_integrated_v5';
     const APP_SCHEMA_VERSION = 3;
-    const APP_VERSION = '2.3.2';
+    const APP_VERSION = '2.3.3';
     const RECOVERY_KEY = STORAGE_KEY + '_recovery';
     let storageLocked = false;
 
@@ -5567,16 +5567,26 @@
 <script>
 (async function(){
  const status=document.getElementById('pwaStatus'), button=document.getElementById('pwaUpdate');
- if(!('serviceWorker' in navigator)){status.textContent='Offline režim není v tomto prostředí dostupný.';button.disabled=true;return;}
+ if(!('serviceWorker' in navigator)){status.textContent='Offline režim není dostupný.';return;}
+ let reg, checking=false, reloading=false;
+ const reload=()=>{if(!reloading){reloading=true;location.reload();}};
+ navigator.serviceWorker.addEventListener('controllerchange',reload);
+ function watch(w){if(!w)return;w.addEventListener('statechange',()=>{if(w.state==='redundant' && checking)status.textContent='Instalace aktualizace selhala. Zkuste kontrolu znovu.';});}
  try {
- const reg=await navigator.serviceWorker.register('./sw.js');
- let reload=false;
- navigator.serviceWorker.addEventListener('controllerchange',()=>{if(reload)location.reload();});
- function offer(){status.textContent='Nová verze je připravena. Uložte zálohu a potvrďte aktualizaci.';button.textContent='Použít novou verzi';}
- if(reg.waiting)offer();
- reg.addEventListener('updatefound',()=>{const w=reg.installing;w.addEventListener('statechange',()=>{if(w.state==='installed' && navigator.serviceWorker.controller)offer();});});
- button.onclick=async()=>{try{if(reg.waiting){if(confirm('Máte aktuální zálohu? Použít novou verzi?')){reload=true;reg.waiting.postMessage('ACTIVATE');}return;}await reg.update();if(reg.waiting)offer();else status.textContent='Kontrola dokončena. Pokud se nová verze připravuje, vyčkejte.';}catch(e){status.textContent='Kontrola se nezdařila. Zkontrolujte připojení.';}};
- }catch(e){status.textContent='Offline režim se nepodařilo připravit.';button.disabled=true;}
+ reg=await navigator.serviceWorker.register('./sw.js',{updateViaCache:'none'});
+ reg.addEventListener('updatefound',()=>{status.textContent='Stahuji novou verzi…';watch(reg.installing);});
+ watch(reg.installing);
+ if(reg.waiting)reg.waiting.postMessage('ACTIVATE');
+ button.onclick=async()=>{
+ if(checking)return;checking=true;button.disabled=true;status.textContent='Kontroluji server…';
+ try{
+ await reg.update();
+ const w=reg.installing||reg.waiting;
+ if(w){status.textContent='Instaluji aktualizaci…';if(reg.waiting)reg.waiting.postMessage('ACTIVATE');}
+ else {const r=await fetch('./index.html',{cache:'no-store'});if(!r.ok)throw Error('HTTP '+r.status);const html=await r.text();const v=html.match(/const APP_VERSION = '([^']+)'/);if(v&&v[1]!== '2.3.3'){status.textContent='Na serveru je verze '+v[1]+'. Načítám…';reload();}else status.textContent='Kontrola dokončena. Používáte verzi 2.3.3.';}
+ }catch(e){status.textContent='Kontrola selhala: '+e.message;}finally{checking=false;button.disabled=false;}
+ };
+ }catch(e){status.textContent='Offline režim se nepodařilo připravit: '+e.message;}
 })();
 </script></body>
 </html>
